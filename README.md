@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Welcome to your Expo app 👋
 
 This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
@@ -48,3 +49,7 @@ Join our community of developers creating universal apps.
 
 - [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
 - [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+=======
+# Aplicacion_Movil_hggb
+Este proyecto que es una aplicación movil estará dirigido a los pacientes del Hospital Regional Guillermo Grant Benavente  para guiarlos dentro del hospital a su destino dentro de este como: un box, sector o servicio
+>>>>>>> 6663a3420906d992a272f38a751b13522ce101df
