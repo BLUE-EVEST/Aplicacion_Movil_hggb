@@ -223,16 +223,31 @@ export default function IndoorMap({ origen_id, destino_id, soloAccesible = false
   // ─── Cálculo de ruta (sin cambios) ────────────────────────────────────────
   const activeRoutePixels = useMemo(() => {
     if (!origen_id || !destino_id) return null;
+
     const startPoi = points.find(p => p.nombre?.toLowerCase() === origen_id.toLowerCase());
     const endPoi   = points.find(p => p.nombre?.toLowerCase() === destino_id.toLowerCase());
+
     if (!startPoi || !endPoi) return null;
+
     const startNodeId = findClosestGraphNode(graph, startPoi.longitude, startPoi.latitude);
     const endNodeId   = findClosestGraphNode(graph, endPoi.longitude,   endPoi.latitude);
-    const nodePath    = executeDijkstra(graph, startNodeId, endNodeId, soloAccesible);
-    return nodePath.map(nodeId => {
-      const [lon, lat] = nodeId.split(',').map(Number);
-      return geoToPixel(lon, lat, bounds, svgWidth, svgHeight);
-    });
+
+    const nodePath = executeDijkstra(graph, startNodeId, endNodeId, soloAccesible);
+
+    // Si Dijkstra encontró camino, usarlo
+    if (nodePath.length > 1) {
+      return nodePath.map(nodeId => {
+        const [lon, lat] = nodeId.split(',').map(Number);
+        return geoToPixel(lon, lat, bounds, svgWidth, svgHeight);
+      });
+    }
+
+    // FALLBACK: línea directa entre origen y destino
+    return [
+      geoToPixel(startPoi.longitude, startPoi.latitude, bounds, svgWidth, svgHeight),
+      geoToPixel(endPoi.longitude,   endPoi.latitude,   bounds, svgWidth, svgHeight),
+    ];
+
   }, [origen_id, destino_id, graph, points, bounds, svgWidth, svgHeight, soloAccesible]);
 
   const activeRouteString = useMemo(() => {
