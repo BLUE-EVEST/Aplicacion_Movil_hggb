@@ -1,0 +1,217 @@
+================================================================================
+          DOCUMENTACIÓN TÉCNICA DEL SISTEMA DE NAVEGACIÓN INDOOR - HGGB
+================================================================================
+
+Este documento detalla la arquitectura de software, relevancia de componentes,
+interdependencias y el flujo del ciclo de vida del sistema de navegación 
+interna para el Hospital Guillermo Grant Benavente (HGGB), desarrollado 
+bajo el framework React Native y Expo.
+
+--------------------------------------------------------------------------------
+1. RESUMEN EJECUTIVO DE LA ARQUITECTURA
+--------------------------------------------------------------------------------
+El sistema está diseñado bajo una arquitectura móvil moderna desacoplada y
+enfocada en un modelo "Offline-First". Sus pilares arquitectónicos son:
+
+- Framework Core: Expo (v54) con React Native (v0.81). Esto proporciona 
+  acceso a APIs nativas de cámara y hardware y, simultáneamente, un renderizado 
+  acelerado por hardware.
+- Enrutamiento: Expo Router, utilizando un patrón de enrutamiento basado en 
+  archivos (file-based routing). Los estados de la navegación superior se 
+  administran en un Stack, y el espacio de trabajo principal se maneja en Tabs.
+- Motor de Posicionamiento (Indoor): Dado que los sistemas GPS convencionales 
+  no tienen penetración en interiores y los sistemas de balizas activas (Beacons 
+  BLE) requieren hardware costoso, se optó por un posicionamiento pasivo
+  mediante códigos QR colocados en la infraestructura física del hospital.
+- Motor Geométrico y Gráfico: Utiliza datos espaciales vectoriales almacenados 
+  en formato GeoJSON. El mapa se proyecta de forma bidimensional plana y se 
+  dibuja de manera nativa mediante vectores usando "react-native-svg".
+- Motor de Caminos Óptimos: Implementación en memoria del algoritmo de Dijkstra 
+  que calcula rutas de guiado en tiempo de ejecución sobre el hilo principal de 
+  JavaScript. Incorpora un parámetro restrictivo para habilitar/deshabilitar 
+  la accesibilidad (movilidad reducida/sillas de ruedas).
+
+--------------------------------------------------------------------------------
+2. ANÁLISIS DE RELEVANCIA ARQUITECTÓNICA Y DICCIONARIO DE ARCHIVOS CLAVE
+--------------------------------------------------------------------------------
+Los archivos de la aplicación se clasifican por su impacto y nivel de 
+criticidad dentro del ecosistema del software:
+
+=========================================
+NIVEL I: IMPACTO CRÍTICO (Core del Sistema)
+=========================================
+Son el motor del sistema. Si se eliminan o fallan, la aplicación queda 
+completamente inoperativa.
+
+1. app/_layout.tsx
+   - Funcionalidad: Punto de entrada raíz de la aplicación. Configura la pila 
+     global (Stack Router) y expone proveedores globales (ThemeProvider y StatusBar).
+   - Interdependencias: Importa 'react-native-reanimated' y 'useColorScheme'. 
+     Invoca y monta el subdirectorio de pestañas 'app/(tabs)/_layout.tsx'.
+   - Importancia Estratégica: Centraliza el tema visual (Modo Oscuro/Claro) 
+     y garantiza que el enrutador inicialice correctamente el ciclo de vida.
+
+2. app/(tabs)/_layout.tsx
+   - Funcionalidad: Define el contenedor de pestañas inferior (Tab Navigator) 
+     del menú principal y maneja el mapeo de accesibilidad de vistas internas.
+   - Interdependencias: Importa 'HapticTab' y 'IconSymbol'. Llama y expone las 
+     pantallas 'index', 'navigation' y 'reviews'.
+   - Importancia Estratégica: Orquesta el menú principal del usuario. Es crítico 
+     porque oculta del menú visual (usando 'href: null') las pantallas 'map' 
+     y 'explore', impidiendo la navegación huérfana.
+
+3. app/(tabs)/map.native.tsx
+   - Funcionalidad: Motor geométrico y de renderizado del mapa SVG. Carga GeoJSONs, 
+     normaliza coordenadas espaciales, genera el grafo dinámico subdividiendo 
+     aristas cruzadas (Snapping geométrico), calcula el camino óptimo vía Dijkstra 
+     y dibuja el SVG resultante.
+   - Interdependencias: Importa los 3 GeoJSONs en 'assets/data/'. Expone el 
+     componente 'IndoorMap' usado por 'navigation.native.tsx'.
+   - Importancia Estratégica: Contiene el núcleo lógico/matemático del software. 
+     Define cómo se comporta la resolución de rutas complejas y la proyección 
+     de mapas offline.
+
+4. app/(tabs)/navigation.native.tsx
+   - Funcionalidad: Pantalla principal de navegación que orquesta la cámara 
+     para escaneo QR de origen, el panel de búsqueda de destinos y la generación 
+     de instrucciones textuales de guiado paso a paso.
+   - Interdependencias: Importa 'IndoorMap' de './map' y los GeoJSONs de datos 
+     espaciales. Utiliza la cámara nativa mediante 'expo-camera'.
+   - Importancia Estratégica: Gestiona la máquina de estados de navegación. Une la 
+     captura del mundo físico (QR) con la visualización digital del mapa y las 
+     instrucciones al usuario.
+
+5. assets/data/* (GeoJSONs)
+   - Archivos: 
+     * edificio_ambulatorio_primer_piso.json
+     * pts_interes_primer_piso.json
+     * rutas_navegacion_primer_piso.json
+   - Funcionalidad: Bases de datos espaciales estáticas del hospital (muros, 
+     servicios y pasillos).
+   - Interdependencias: Son cargados y procesados de manera exclusiva por 
+     'map.native.tsx' y 'navigation.native.tsx'.
+   - Importancia Estratégica: Representan el gemelo digital espacial del hospital. 
+     Cualquier daño o desalineación en sus coordenadas rompe la conectividad del 
+     grafo e inhabilita a Dijkstra.
+
+=========================================
+NIVEL II: IMPACTO ALTO (Soporte Operativo)
+=========================================
+Archivos esenciales para flujos de negocio específicos del usuario, manejo del 
+estado del tema o retroalimentación sensorial premium.
+
+1. app/(tabs)/reviews.native.tsx
+   - Funcionalidad: Gestiona la vista y el formulario para que los usuarios 
+     escriban valoraciones de calidad de servicio del hospital.
+   - Interdependencias: Usa AsyncStorage para almacenamiento persistente de 
+     comentarios y KeyboardAvoidingView para control de layouts.
+   - Importancia Estratégica: Principal flujo de interacción bidireccional y 
+     persistencia asíncrona local de datos de usuario.
+
+2. constants/theme.ts
+   - Funcionalidad: Centraliza los tokens de diseño (colores y tipografías 
+     adaptativas) de la aplicación para modo claro, modo oscuro y plataformas 
+     específicas (iOS/Android/Web).
+   - Interdependencias: Importado en '_layout.tsx', 'explore.tsx' y componentes UI.
+   - Importancia Estratégica: Asegura la consistencia de diseño visual y previene 
+     el uso de estilos ad-hoc dispersos en la aplicación.
+
+3. components/haptic-tab.tsx
+   - Funcionalidad: Implementa retroalimentación háptica (vibración leve) 
+     mediante 'expo-haptics' al pulsar las pestañas.
+   - Interdependencias: Importado en 'app/(tabs)/_layout.tsx'.
+   - Importancia Estratégica: Aporta una experiencia de uso de alta gama y 
+     premium, impactando la percepción de respuesta del sistema.
+
+4. hooks/use-color-scheme.ts
+   - Funcionalidad: Hook de conveniencia que extrae y observa el esquema de 
+     colores preferido por el sistema del usuario.
+   - Interdependencias: Usado en layouts para refrescar los componentes al cambiar 
+     el tema global.
+   - Importancia Estratégica: Simplifica el soporte multi-tema de la UI.
+
+=========================================
+NIVEL III: IMPACTO MEDIO (Componentes UI Auxiliares y Fallbacks)
+=========================================
+Componentes utilitarios genéricos de la interfaz y archivos que actúan como 
+fallbacks para plataformas secundarias.
+
+1. app/(tabs)/map.tsx, app/(tabs)/navigation.tsx, app/(tabs)/reviews.tsx
+   - Funcionalidad: Archivos de redirección nativa. Exportan por defecto sus 
+     respectivas versiones '.native.tsx'.
+   - Importancia Estratégica: Mediadores que simplifican el proceso de empaquetado 
+     (bundling), permitiendo que Metro seleccione automáticamente el archivo base.
+
+2. app/(tabs)/map.web.tsx y app/(tabs)/navigation.web.tsx
+   - Funcionalidad: Fallbacks informativos para la plataforma Web de escritorio.
+   - Importancia Estratégica: Evitan crasheos de compilación cuando la app se abre 
+     en la web, guiando al usuario a utilizar la versión móvil.
+
+3. components/ui/icon-symbol.tsx
+   - Funcionalidad: Abstracción de renderizado de íconos que adapta SF Symbols 
+     en iOS y Material Icons en Android.
+   - Importancia Estratégica: Mantiene la paridad iconográfica multiplataforma.
+
+--------------------------------------------------------------------------------
+3. CICLO DE VIDA Y FLUJO DE EJECUCIÓN (PASO A PASO)
+--------------------------------------------------------------------------------
+A continuación, se detalla conceptualmente cómo interactúan los archivos críticos 
+desde el arranque de la app hasta que el usuario es guiado a su destino:
+
+Fase A: Arranque e Inicialización
+1. El motor de Expo arranca la aplicación cargando [app/_layout.tsx].
+2. Se consulta el tema del sistema operativo mediante [hooks/use-color-scheme.ts].
+3. Se inicializa el motor de animaciones ('react-native-reanimated') y se monta 
+   la estructura de navegación global.
+4. El Stack router monta automáticamente el contenedor de pestañas secundario 
+   [app/(tabs)/_layout.tsx], el cual por defecto abre la pantalla 'Inicio' 
+   [app/(tabs)/index.tsx].
+
+Fase B: Localización Indoor (QR)
+1. El usuario presiona la pestaña "Navegar" [app/(tabs)/navigation.native.tsx].
+2. La app comprueba permisos de cámara. Si están concedidos, activa [expo-camera] 
+   y el componente `<CameraView>` se despliega en pantalla completa.
+3. El usuario enfoca un código QR impreso en una pared física del hospital.
+4. El escáner lee el QR, parsea su contenido JSON (`{"origen_id": "Entrada_San_Martin", "piso": 1}`) 
+   y actualiza el estado local `origen` en [navigation.native.tsx], cerrando 
+   la cámara y abriendo la pantalla del mapa interactivo.
+
+Fase C: Configuración de Destino
+1. El panel flotante inferior (42% de la pantalla) se despliega exponiendo un 
+   buscador y botones deslizables (Chips) filtrando por categoría de servicio.
+2. El usuario escribe o selecciona un destino (ej: "Box 5").
+3. El estado de la interfaz se actualiza y pasa los parámetros `origen` y 
+   `destino` al componente de dibujo [app/(tabs)/map.native.tsx] como props.
+
+Fase D: Procesamiento de Grafo y Ruta (Motor Dijkstra)
+1. [map.native.tsx] procesa los GeoJSONs de pasillos y puntos de interés.
+2. Mediante `buildGraphFromRoutes`, se genera un grafo matemático en memoria. 
+   Los segmentos de pasillos se intersectan si colisionan con otros vértices 
+   usando la tolerancia de Snapping (`getClosestPointOnSegment`).
+3. El punto de origen y de destino (ambos POIs) se vinculan al nodo caminable 
+   más cercano del grafo del pasillo.
+4. Se ejecuta `executeDijkstra`. Si está activo el modo accesible (`soloAccesible`), 
+   se descartan del grafo aquellas aristas que contengan la propiedad 
+   `accesible: "no"` en el GeoJSON de pasillos.
+5. El algoritmo calcula la ruta óptima en milisegundos y devuelve una cadena 
+   ordenada de nodos geográficos que conforman el camino más corto.
+
+Fase E: Renderizado Gráfico (SVG) e Instrucciones
+1. [map.native.tsx] toma la cadena de nodos calculada y mediante `geoToPixel` 
+   la escala dinámicamente al ancho de la pantalla usando el Bounding Box de los 
+   límites de la infraestructura.
+2. Se dibuja sobre el lienzo SVG una polilínea (`<Polyline>`) de color cian brillante 
+   con esquinas redondeadas sobre las capas atenuadas del plano arquitectónico.
+3. En paralelo, [navigation.native.tsx] procesa el origen y destino en su 
+   función heurística `generarInstrucciones`, traduciendo el segmento matemático 
+   en una lista de pasos en lenguaje natural (ej: "Avanza por el pasillo principal", 
+   "Dirígete hacia los boxes del sector medio").
+4. El usuario puede alternar la vista en el panel inferior para leer las 
+   instrucciones secuenciales mientras observa el mapa interactivo en la pantalla.
+
+Fase F: Registro de Experiencia (Reviews)
+1. Al concluir su trayecto, el usuario puede acceder a "Reseñas" [app/(tabs)/reviews.native.tsx].
+2. Escribe su nombre, califica con estrellas y selecciona el policlínico visitado.
+3. El formulario ajusta su posición dinámicamente mediante `KeyboardAvoidingView`.
+4. Al presionar "Enviar", la reseña se inserta en cabeza y se persiste de manera 
+   segura de forma síncrona/asíncrona en la base de datos local usando [AsyncStorage].
