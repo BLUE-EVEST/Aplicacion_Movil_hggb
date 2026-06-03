@@ -1,4 +1,19 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+/**
+ * COMPONENTE: ReviewsScreen (Versión Nativa para Android/iOS)
+ * PROPÓSITO: Implementa la sección de retroalimentación de pacientes, permitiendo calificar
+ * con estrellas (1 a 5) y dejar comentarios escritos sobre servicios médicos específicos del hospital.
+ * 
+ * JUSTIFICACIÓN DISEÑO/UX:
+ * - Persistencia Desconectada (AsyncStorage): Almacena las opiniones directamente en la memoria flash
+ *   local del dispositivo móvil. Esto permite un funcionamiento fuera de línea (offline) ideal para
+ *   zonas del hospital con mala señal telefónica, y simula el almacenamiento de datos antes de
+ *   sincronizarse con una API REST en la nube.
+ * - Flexibilidad de Entrada: Proporciona un selector gráfico de estrellas hecho a medida,
+ *   un dropdown simulado para seleccionar servicios y un campo multilinea con contador de caracteres
+ *   en tiempo real (límite de 300 letras) para evitar desbordamiento visual.
+ */
+
+import AsyncStorage from '@react-native-async-storage/async-storage'; // Librería de persistencia asíncrona clave-valor nativa
 import React, { useCallback, useEffect, useState } from 'react';
 import {
     Alert,
@@ -6,6 +21,7 @@ import {
     KeyboardAvoidingView,
     Platform,
     SafeAreaView,
+    ScrollView,
     StyleSheet,
     Text,
     TextInput,
@@ -15,17 +31,19 @@ import {
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 type Resena = {
-  id: string;
+  id: string; // Timestamp serializado
   autor: string;
-  calificacion: number; // 1 a 5
+  calificacion: number; // Ponderación entera del 1 al 5
   comentario: string;
   servicio: string;
-  fecha: string;
+  fecha: string; // Formateada según convención local chilena ('es-CL')
 };
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
+// Identificador único de almacenamiento local para aislar los datos de esta aplicación y versión.
 const STORAGE_KEY = 'hggb_resenas_v1';
 
+// Catálogo cerrado de unidades del hospital sujetas a auditoría / opinión por el paciente
 const SERVICIOS = [
   'Policlínico de Cardiología',
   'Policlínico de Oncología',
@@ -45,9 +63,17 @@ const SERVICIOS = [
 const AZUL  = '#1a73e8';
 const VERDE = '#2e7d32';
 const FONDO = '#f0f4f8';
-const ROJO  = '#e53935';
 
-// ─── Subcomponente: Selector de Estrellas ─────────────────────────────────────
+// ─── Subcomponentes Internos ─────────────────────────────────────────────────
+// Descomponer la pantalla en subcomponentes funcionales mejora la mantenibilidad del código
+// y evita re-renderizados innecesarios del formulario completo.
+
+/**
+ * SelectorEstrellas:
+ * Control táctil personalizado para fijar la calificación.
+ * Reemplaza el uso de librerías externas pesadas utilizando caracteres Unicode estándar ('★' y '☆')
+ * y escalando su tamaño de forma responsiva para facilitar la interacción de pacientes de la tercera edad.
+ */
 function SelectorEstrellas({
   valor,
   onChange,
@@ -68,7 +94,11 @@ function SelectorEstrellas({
   );
 }
 
-// ─── Subcomponente: Tarjeta de Reseña ─────────────────────────────────────────
+/**
+ * TarjetaResena:
+ * Representación visual (Card) tipo burbuja para desplegar comentarios individuales.
+ * Usa interpolación de cadenas para construir la cadena visual de estrellas fijas de forma eficiente.
+ */
 function TarjetaResena({ resena }: { resena: Resena }) {
   const estrellas = '★'.repeat(resena.calificacion) + '☆'.repeat(5 - resena.calificacion);
 
@@ -81,7 +111,7 @@ function TarjetaResena({ resena }: { resena: Resena }) {
       <Text style={st.tarjetaServicio}>🏥 {resena.servicio}</Text>
       <Text style={st.tarjetaEstrellas}>{estrellas}</Text>
       {resena.comentario ? (
-        <Text style={st.tarjetaComentario}>"{resena.comentario}"</Text>
+        <Text style={st.tarjetaComentario}>{"\""}{resena.comentario}{"\""}</Text>
       ) : null}
     </View>
   );
@@ -90,28 +120,29 @@ function TarjetaResena({ resena }: { resena: Resena }) {
 // ─── Componente Principal ─────────────────────────────────────────────────────
 export default function ReviewsScreen() {
   const [resenas,       setResenas]       = useState<Resena[]>([]);
-  const [mostrarForm,   setMostrarForm]   = useState(false);
+  const [mostrarForm,   setMostrarForm]   = useState(false); // Conmutador de la visibilidad del formulario de ingreso
   const [autor,         setAutor]         = useState('');
   const [calificacion,  setCalificacion]  = useState(0);
   const [comentario,    setComentario]    = useState('');
   const [servicio,      setServicio]      = useState('');
-  const [mostrarServicios, setMostrarServicios] = useState(false);
-  const [guardando,     setGuardando]     = useState(false);
+  const [mostrarServicios, setMostrarServicios] = useState(false); // Controla el despliegue del modal-dropdown de servicios
+  const [guardando,     setGuardando]     = useState(false); // Estado de carga para deshabilitar clicks accidentales al guardar
 
-  // ── Cargar reseñas guardadas al montar ────────────────────────────────────
+  // ── Cargar reseñas guardadas en AsyncStorage al montar ────────────────────
   const cargarResenas = useCallback(async () => {
     try {
       const raw = await AsyncStorage.getItem(STORAGE_KEY);
       if (raw) setResenas(JSON.parse(raw));
     } catch {
-      // Si falla la lectura, mostramos lista vacía
+      // Control de fallos silencioso: Si el almacenamiento está dañado, se inicializa vacío
     }
   }, []);
 
   useEffect(() => { cargarResenas(); }, [cargarResenas]);
 
-  // ── Guardar nueva reseña ──────────────────────────────────────────────────
+  // ── Guardar nueva reseña e impactar en AsyncStorage ────────────────────────
   const guardarResena = async () => {
+    // Validaciones estrictas previas al procesamiento de persistencia
     if (!autor.trim()) {
       Alert.alert('Falta tu nombre', 'Por favor escribe tu nombre antes de enviar.');
       return;
@@ -128,17 +159,19 @@ export default function ReviewsScreen() {
     setGuardando(true);
 
     const nueva: Resena = {
-      id:           Date.now().toString(),
+      id:           Date.now().toString(), // Generación de clave única usando milisegundos del sistema
       autor:        autor.trim(),
       calificacion,
       comentario:   comentario.trim(),
       servicio,
+      // Fecha en formato local chileno, ej: "03 de junio de 2026"
       fecha:        new Date().toLocaleDateString('es-CL', {
                       day: '2-digit', month: 'long', year: 'numeric'
                     }),
     };
 
     try {
+      // Inserción en cabeza (LIFO) para que las opiniones más recientes aparezcan al inicio de la lista
       const actualizadas = [nueva, ...resenas];
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(actualizadas));
       setResenas(actualizadas);
@@ -160,20 +193,29 @@ export default function ReviewsScreen() {
     setMostrarServicios(false);
   };
 
-  // ── Promedio de calificaciones ────────────────────────────────────────────
+  // Cálculo reactivo del promedio de estrellas acumuladas para desplegar en el encabezado
   const promedio = resenas.length > 0
     ? (resenas.reduce((acc, r) => acc + r.calificacion, 0) / resenas.length).toFixed(1)
     : null;
 
-  // ─── Render ───────────────────────────────────────────────────────────────
+  // ─── Renderizado de la Interfaz ───────────────────────────────────────────
   return (
     <SafeAreaView style={st.safeArea}>
+      {/* 
+       * KeyboardAvoidingView:
+       * Componente de utilidad nativo crítico para la experiencia de usuario (UX).
+       * Desplaza hacia arriba el formulario de reseña cuando emerge el teclado virtual del celular,
+       * evitando que se oculten los inputs de comentario y botones de guardar en pantallas pequeñas.
+       * - iOS: Se beneficia del comportamiento 'padding' calculando la altura del teclado.
+       * - Android: Tradicionalmente maneja el redimensionamiento a nivel de sistema operativo (manifest),
+       *   por lo que se pasa undefined para evitar doble compensación.
+       */}
       <KeyboardAvoidingView
         style={st.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
 
-        {/* Encabezado */}
+        {/* Encabezado con estadísticas rápidas */}
         <View style={st.encabezado}>
           <Text style={st.encabezadoTitulo}>⭐ Reseñas del Hospital</Text>
           {promedio && (
@@ -183,12 +225,12 @@ export default function ReviewsScreen() {
           )}
         </View>
 
-        {/* Formulario nueva reseña */}
+        {/* Formulario condicional para redactar nueva opinión */}
         {mostrarForm ? (
           <View style={st.formulario}>
             <Text style={st.formTitulo}>📝 Nueva reseña</Text>
 
-            {/* Nombre */}
+            {/* Fila: Nombre Autor */}
             <Text style={st.etiqueta}>Tu nombre</Text>
             <TextInput
               style={st.input}
@@ -199,7 +241,7 @@ export default function ReviewsScreen() {
               maxLength={40}
             />
 
-            {/* Selector de servicio */}
+            {/* Fila: Selector de servicio (Simulación de Dropdown) */}
             <Text style={st.etiqueta}>Servicio visitado</Text>
             <TouchableOpacity
               style={st.selectorServicio}
@@ -211,27 +253,30 @@ export default function ReviewsScreen() {
               <Text style={st.chevron}>{mostrarServicios ? '▲' : '▼'}</Text>
             </TouchableOpacity>
 
+            {/* Opciones desplegables del selector de servicios */}
             {mostrarServicios && (
               <View style={st.listaServicios}>
-                {SERVICIOS.map(s => (
-                  <TouchableOpacity
-                    key={s}
-                    style={[st.itemServicio, servicio === s && st.itemServicioActivo]}
-                    onPress={() => { setServicio(s); setMostrarServicios(false); }}
-                  >
-                    <Text style={[st.itemServicioTexto, servicio === s && st.itemServicioTextoActivo]}>
-                      {s}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+                <ScrollView nestedScrollEnabled style={{ maxHeight: 150 }}>
+                  {SERVICIOS.map(s => (
+                    <TouchableOpacity
+                      key={s}
+                      style={[st.itemServicio, servicio === s && st.itemServicioActivo]}
+                      onPress={() => { setServicio(s); setMostrarServicios(false); }}
+                    >
+                      <Text style={[st.itemServicioTexto, servicio === s && st.itemServicioTextoActivo]}>
+                        {s}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
               </View>
             )}
 
-            {/* Calificación */}
+            {/* Fila: Calificación en estrellas */}
             <Text style={st.etiqueta}>Calificación</Text>
             <SelectorEstrellas valor={calificacion} onChange={setCalificacion} />
 
-            {/* Comentario */}
+            {/* Fila: Comentario Escrito */}
             <Text style={st.etiqueta}>Comentario (opcional)</Text>
             <TextInput
               style={[st.input, st.inputMultilinea]}
@@ -243,9 +288,10 @@ export default function ReviewsScreen() {
               numberOfLines={4}
               maxLength={300}
             />
+            {/* Indicador numérico dinámico de límite de escritura */}
             <Text style={st.contador}>{comentario.length}/300</Text>
 
-            {/* Botones del formulario */}
+            {/* Botones de acción del formulario */}
             <View style={st.filaBotones}>
               <TouchableOpacity
                 style={st.btnCancelar}
@@ -266,13 +312,16 @@ export default function ReviewsScreen() {
           </View>
 
         ) : (
-          /* Botón para abrir formulario */
+          /* Botón para abrir el formulario (Estado por defecto) */
           <TouchableOpacity style={st.btnNuevaResena} onPress={() => setMostrarForm(true)}>
             <Text style={st.btnNuevaResenaTexto}>+ Escribir una reseña</Text>
           </TouchableOpacity>
         )}
 
-        {/* Lista de reseñas */}
+        {/* Listado dinámico de reseñas persistidas (FlatList)
+         * Se prefiere FlatList sobre un ScrollView iterativo simple porque renderiza elementos de forma perezosa
+         * (Lazy rendering), liberando memoria de la GPU móvil para listas con alta cantidad de registros.
+         */}
         {resenas.length === 0 && !mostrarForm ? (
           <View style={st.vacio}>
             <Text style={st.vacioIcono}>💬</Text>
